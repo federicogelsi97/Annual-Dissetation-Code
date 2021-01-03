@@ -1,0 +1,435 @@
+#Packages
+import twint
+import pandas as pd
+from datetime import datetime, timedelta
+import nest_asyncio
+import numpy as np
+nest_asyncio.apply()
+from optimus import Optimus
+op = Optimus()
+import os
+
+
+
+### SEC ####   '/home/fede/Business descriptions text/'
+
+
+
+
+
+l = []
+folder = "/home/fede/Business descriptions text/"
+for filename in os.listdir(folder):
+   file = os.path.join(folder, filename)
+   if os.path.isfile(file):
+       id = filename.split('_')[0]
+       with open(file, 'r') as f:
+           content = f.read()
+           content = content[content.find('\n\n\n')+3:]
+       l.append([id, content])
+  
+df_SEC = pd.DataFrame(l, columns=["id", "item 1"])
+
+
+##FUNCTIONS 
+def available_columns():
+    return twint.output.panda.Tweets_df.columns
+
+
+def twint_to_pandas(columns):
+    return twint.output.panda.Tweets_df[columns]
+
+#Data and Data manipulation
+df=pd.read_csv("/home/fede/SSSUP/Tesina2020/dati/df1.csv")
+df["Target Primary Ticker Symbol"] = "$" + df["Target Primary Ticker Symbol"]
+print(df)
+
+
+#Date 
+date = pd.to_datetime(df["Date Announced"])
+until = date - timedelta(days=7)
+since = until - timedelta(days=365)
+
+untildf = until.to_frame()
+untildf["Date Announced"]= untildf["Date Announced"].astype(str)
+
+
+## CICLO FOR per avere i tweet
+#len(df["Target Primary Ticker Symbol"])
+username_lista=[]
+tweet_lista=[]
+search_lista=[]
+date_lista=[]
+cashtags_lista=[]
+language_lista=[]
+hashtags_lista=[]
+for i in range(len(df["Target Primary Ticker Symbol"])):
+    print("SONO A QUESTA I PD",i)
+    c = twint.Config()
+    c.Search = df["Target Primary Ticker Symbol"][i]
+    c.Lang = 'en'
+    c.Since = "2012-07-31"
+    c.Until = untildf["Date Announced"][i]
+    c.Count = True
+    c.Min_likes= 3
+    c.Lowercase = True
+    c.Media = False
+    c.Show_cashtags = True
+    c.Pandas = True
+    # Custom output format
+    c.Format = "Username: {username} |  Tweet: {tweet} | Cashtag: {Search}"
+    c.Limit = 10000
+    twint.run.Search(c)
+
+    Tweets_df = twint.storage.panda.Tweets_df
+    
+    if (len(Tweets_df)== 0):
+        continue
+    #### GEstione del dataset di output
+    available_columns()
+    df_pd = twint_to_pandas(["username", "tweet","search","date", "cashtags", "hashtags","language"])
+    
+    for j in range(len(df_pd)):
+        username_lista.append(df_pd.loc[j].username)
+        tweet_lista.append(df_pd.loc[j].tweet)
+        search_lista.append(df_pd.loc[j].search)
+        date_lista.append(df_pd.loc[j].date)
+        language_lista.append(df_pd.loc[j].language)
+        cashtags_lista.append(df_pd.loc[j].cashtags)
+        hashtags_lista.append(df_pd.loc[j].hashtags)
+        
+        
+cols = ["date", "username", "tweet", "hashtags","language","search"]
+df_pd_finale = pd.DataFrame(columns=cols, index=range(100000000))
+for i in range(len(username_lista)):
+    df_pd_finale.loc[i].username = username_lista[i]
+    df_pd_finale.loc[i].tweet = tweet_lista[i]
+    df_pd_finale.loc[i].search = search_lista[i]
+    df_pd_finale.loc[i].date = date_lista[i]
+    df_pd_finale.loc[i].language = language_lista[i]
+    df_pd_finale.loc[i].hashtags = hashtags_lista[i]
+    df_pd_finale.loc[i].cashtags = cashtags_lista[i]
+
+## Dropping Nan and save
+    
+df_pd_finale = df_pd_finale.dropna()
+
+df_pd_finale.to_pickle("/home/fede/SSSUP/Tesina2020/dati/datitesi.pkl")
+
+df_tweets = pd.read_pickle("/home/fede/SSSUP/Tesina2020/dati/datitesi.pkl")
+
+df_tweets = df_tweets.rename(columns={'search':'Target Primary Ticker Symbol'})
+
+
+### Merging dataset for tweets and save in pickle
+
+
+df_nlptweet = pd.merge(df_tweets, df, on="Target Primary Ticker Symbol")
+
+df_nlptweet.to_pickle("/home/fede/SSSUP/Tesina2020/dati/nlptweet.pkl")
+    
+#####
+
+#### INIZIO MODELLO   
+import numpy as np
+import pandas as pd
+
+import sparknlp
+from pyspark.ml import Pipeline
+from sparknlp.annotator import *
+from sparknlp.common import *
+from sparknlp.base import *
+import pyspark
+import sparknlp
+spark = sparknlp.start() 
+sparknlp.start(gpu=True)
+from sparknlp.base import *
+from sparknlp.annotator import *
+from pyspark.ml import Pipeline
+from pyspark.sql.functions import col
+
+
+
+
+
+#### STARTING SESSION
+import numpy as np
+import pandas as pd
+
+import sparknlp
+spark = sparknlp.start(gpu=True)
+print("Version of SparkNLP:", sparknlp.version())
+print("Version of Spark :", spark.version)
+
+
+from pyspark.ml import Pipeline
+from sparknlp.annotator import *
+from sparknlp.common import *
+from sparknlp.base import *
+from pyspark.sql.functions import col, explode, array, lit
+
+
+# Enable Arrow-based columnar data transfers  - ---- IMPORTO DATI
+
+df = pd.read_pickle("/home/fede/SSSUP/Tesina2020/dati/nlptweet.pkl")  
+spark.conf.set("spark.sql.execution.arrow.enabled", "true")
+# Create a Spark DataFrame from a pandas DataFrame using Arrow
+df_Spark = spark.createDataFrame(df)  
+
+
+df_Spark.show(5, truncate=55)
+    
+    
+df_Spark.groupBy("Dummy").count().show()   
+    
+    
+train_news, test_news = df_Spark.randomSplit([0.8, 0.2], seed = 100)    
+    
+train_news.count()
+
+test_news.count()   
+    
+
+## Sampling strategies fr umbalancedness on the training set
+major_df = train_news.filter(col("Dummy") == 0)
+minor_df = train_news.filter(col("Dummy") == 1)
+ratio = int(major_df.count()/minor_df.count())
+print("ratio: {}".format(ratio))  
+    
+#### Oversampling ## NON FUNZIONA
+
+a = range(ratio)
+# duplicate the minority rows
+oversampled_df = minor_df.withColumn("dummy", explode(array([lit(x)
+for x in a]))).drop('dummy')
+# combine both oversampled minority rows and previous majority rows 
+combined_df = major_df.unionAll(oversampled_df)
+combined_df.show()
+
+
+#### UnderSampling
+
+sampled_majority_df = major_df.sample(False, 1/ratio)
+combined_df_2_train = sampled_majority_df.unionAll(minor_df)
+combined_df_2_train.show()   
+    
+combined_df_2_train.groupBy("Dummy").count().show()    
+    
+    
+
+# Under Sampling also the test set
+major_df_test = test_news.filter(col("Dummy") == 0)
+minor_df_test = test_news.filter(col("Dummy") == 1)
+ratio = int(major_df.count()/minor_df.count())
+print("ratio: {}".format(ratio))  
+ 
+sampled_majority_df_test = major_df_test.sample(False, 1/ratio)
+combined_df_2_test = sampled_majority_df_test.unionAll(minor_df_test)
+combined_df_2_test.show()   
+    
+combined_df_2_test.groupBy("Dummy").count().show()    
+    
+
+
+
+
+
+
+
+
+
+##### NLP Pipeline for Logistic Regression e Naive bayes models
+
+
+document = DocumentAssembler()\
+    .setInputCol("tweet")\
+    .setOutputCol("document")
+
+sentence = SentenceDetector()\
+    .setInputCols(['document'])\
+    .setOutputCol('sentence')
+
+token = Tokenizer()\
+    .setInputCols(['sentence'])\
+    .setOutputCol('token')
+
+stop_words = StopWordsCleaner.pretrained('stopwords_en', 'en')\
+    .setInputCols(["token"]) \
+    .setOutputCol("cleanTokens") \
+    .setCaseSensitive(False)
+
+lemmatizer = LemmatizerModel.pretrained("lemma_antbnc", "en") \
+         .setInputCols(["cleanTokens"]) \
+         .setOutputCol("lemma")
+
+finisher = Finisher() \
+    .setInputCols(["lemma"]) \
+    .setOutputCols(["token_features"]) \
+    .setOutputAsArray(True) \
+    .setCleanAnnotations(False)
+
+
+from pyspark.ml.feature import HashingTF, IDF, StringIndexer, IndexToString
+from pyspark.ml.classification import LogisticRegression, NaiveBayes
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+
+
+### Text Classification with LogisticRegression
+hashTF = HashingTF(inputCol="token_features", outputCol="raw_features")
+
+idf = IDF(inputCol="raw_features", outputCol="features", minDocFreq=5)
+
+label_strIdx = StringIndexer(inputCol="Dummy", outputCol="label")
+
+logReg = LogisticRegression(maxIter=10)
+
+label_Idxstr = IndexToString(inputCol="label", outputCol="M&A")
+
+nlp_pipeline_lr = Pipeline(
+        stages=[document, 
+                sentence,
+                token,
+                stop_words, 
+                lemmatizer, 
+                finisher,
+                hashTF,
+                idf,
+                label_strIdx,
+                logReg,
+                label_Idxstr])
+
+classification_model_lr = nlp_pipeline_lr.fit(combined_df_2_train)
+
+pred_lr = classification_model_lr.transform(combined_df_2_test)
+
+#pred_lr.select("Dummy", "label", "prediction").show(5)
+pred_lr.select("label", "prediction").show(5)
+
+### Evaluation
+
+evaluator = MulticlassClassificationEvaluator(
+    labelCol="label", predictionCol="prediction", metricName="accuracy")
+accuracy = evaluator.evaluate(pred_lr)
+print("Accuracy = %g" % (accuracy))
+print("Test Error = %g " % (1.0 - accuracy))
+
+from sklearn.metrics import classification_report, accuracy_score
+
+df_lr = classification_model_lr \
+   .transform(combined_df_2_test) \
+   .select("label", "prediction") \
+   .toPandas()
+
+
+df_lr.head()
+
+
+print(classification_report(df_lr.label, df_lr.prediction))
+
+
+#### Text Classification con NaiveBayes
+
+
+hashTF = HashingTF(inputCol="token_features", outputCol="raw_features", numFeatures=100)
+
+idf = IDF(inputCol="raw_features", outputCol="features", minDocFreq=5)
+
+label_strIdx = StringIndexer(inputCol="Dummy", outputCol="label")
+
+bayes_class = NaiveBayes(smoothing=111)
+
+label_Idxstr = IndexToString(inputCol="label", outputCol="M&A")
+
+nlp_pipeline_bayes = Pipeline(
+    stages=[document, 
+            sentence,
+            token,
+            stop_words, 
+            lemmatizer, 
+            finisher,
+            hashTF,
+            idf,
+            label_strIdx,
+            bayes_class,
+            label_Idxstr])
+
+classification_model_bayes = nlp_pipeline_bayes.fit(combined_df_2_train)
+
+pred_bayes = classification_model_bayes.transform(combined_df_2_test)
+
+pred_bayes.select("label", "prediction").show(5)
+
+## Evaluation N Bayes
+
+
+evaluator = MulticlassClassificationEvaluator(
+    labelCol="label", predictionCol="prediction", metricName="accuracy")
+accuracy = evaluator.evaluate(pred_bayes)
+print("Accuracy = %g" % (accuracy))
+print("Test Error = %g " % (1.0 - accuracy))
+
+
+df_bayes = classification_model_bayes.transform(combined_df_2_test).select("label", "prediction").toPandas()
+
+df_bayes.head()
+
+
+print(classification_report(df_bayes.label, df_bayes.prediction))
+
+
+
+######################################
+
+
+#### Classification with BertSentenceEmbeddings and GloVeWordEmbeddings
+
+
+
+#######################################
+from pyspark.sql.types import *
+from pyspark.sql.functions import col
+
+combined_df_2_train_bert = combined_df_2_train.withColumn("Dummy", combined_df_2_train["Dummy"].cast(DoubleType()))
+## ------  Setting the Pipeline for Bert("labse") & ClassifierDLApproach
+
+
+document = DocumentAssembler()\
+    .setInputCol("tweet")\
+    .setOutputCol("document")
+
+embeddings = BertSentenceEmbeddings\
+    .pretrained('labse', 'xx') \
+    .setInputCols(["document"])\
+    .setOutputCol("sentence_embeddings")
+
+classsifierdl = ClassifierDLApproach()\
+   .setInputCols(["sentence_embeddings"])\
+   .setOutputCol("class")\
+   .setLabelColumn("Dummy")\
+   .setMaxEpochs(5)\
+   .setEnableOutputLogs(True)
+
+
+nlp_pipeline_bert = Pipeline(
+    stages=[document, 
+            sentence,
+            token,
+            stop_words, 
+            lemmatizer, 
+            embeddings,
+            classsifierdl])
+    
+
+classification_model_bert = nlp_pipeline_bert.fit(combined_df_2_train_bert)
+
+
+df_bert = classification_model_bert.transform(combined_df_2_test).select("Dummy", "tweet", "class.result").toPandas()
+
+df_bert.head()   
+
+df_bert["result"].str[0].head()
+
+
+
+#### Evaluation of Classification (DLApproach & BertEmbeddings)
+print(classification_report(df_bert.category, df_bert.result.str[0]))
